@@ -23,16 +23,9 @@ class Database:
         self._conn.close()
         self._conn, self._cursor = None, None
 
-    def add_record(self, title: str, body: str):
-        self._cursor.execute(
-            "INSERT INTO records VALUES(?, ?)",
-            (title, body)
-        )
-        self._conn.commit()
-
     def fetch_record(self, title: str) -> Optional[str]:
         res = self._cursor.execute(
-            "SELECT body FROM records WHERE name='?'",
+            "SELECT body FROM records WHERE name = (?)",
             (title,)
         ).fetchone()
         if res is None:
@@ -40,5 +33,16 @@ class Database:
         else:
             return res[0]
 
+    def add_record(self, title: str, body: str):
+        self._cursor.execute(
+            "INSERT INTO records VALUES(?, ?)",
+            (title, body)
+        )
+        self._conn.commit()
+
     def del_record(self, title: str) -> None:
-        pass
+        self._cursor.execute(
+            "DELETE FROM records WHERE name = (?)",
+            (title,)
+        )
+        self._conn.commit()

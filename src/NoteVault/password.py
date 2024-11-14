@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import string
 from logging import getLogger
 from secrets import token_urlsafe
@@ -80,3 +81,7 @@ class Encoder:
         data_bytes = data.encode("utf-8")
         decrypted = self._encoder.decrypt(data_bytes)
         return decrypted.decode("utf-8")
+    
+    def md5_sum(self, data: str) ->  str:
+        # TODO maybe pre-init hash with pwd hash?
+        return hashlib.md5(data.encode("utf-8")).hexdigest()

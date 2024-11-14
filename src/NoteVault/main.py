@@ -48,8 +48,12 @@ class AppState(Enum):
     ADDRECORD = 3
     FINDRECORD = 4
     DELETERECORD = 5
-    RECORDFOUND = 6
-    RECORDNOTFOUND = 7
+    VIEWALLTITLES = 6
+
+    RECORDFOUND = 7
+    RECORDNOTFOUND = 8
+    RECORDALREADYEXISTS = 9
+    RECORDDELETED = 10
 
     CHANGEPASSWORD = 100
     CHANGEPASSWORDFAILED = 101
@@ -65,6 +69,10 @@ WINDOW_SIZES = {
     AppState.INVALIDNEWPASSWORD: (400, 150),
     AppState.LOGGEDOFF: (400, 200),
     AppState.INVALIDPASSWORD: (400, 120),
+    AppState.RECORDFOUND: (400, 400),
+    AppState.RECORDNOTFOUND: (400, 100),
+    AppState.RECORDALREADYEXISTS: (400, 100),
+    AppState.RECORDDELETED: (400, 100),
 }
 
 
@@ -196,7 +204,7 @@ class App:
                             clicked_change_pwd, _ = imgui.menu_item("Change password", "")
                             if clicked_change_pwd:
                                 logger.log(VERBOSE, "User selected change password")
-                                self.state = AppState.CHANGEPASSWORD #TODO add mode
+                                self.state = AppState.CHANGEPASSWORD # TODO add mode
                             clicked_reset, _ = imgui.menu_item("Delete all data", "")
                             if clicked_reset:
                                 logger.log(VERBOSE, "User selected hard reset") # TODO debug print
@@ -214,13 +222,13 @@ class App:
                     imgui.INPUT_TEXT_PASSWORD
                 )
                 confirm_clicked = imgui.button("Confirm")
-                if confirm_clicked and len(self.user_input):
+                if len(self.user_input) and (confirm_clicked):
                     logger.debug(f"User input is {self.user_input}") # TODO debug print
                     if password_meets_requirements(self.user_input):
                         self.encoder = Encoder(self.user_input, self.config.password_salt)
                         self.config.password_hash = self.encoder.password_hash
                         self.config.dump()
-                        # TODO init  database
+                        # TODO init database
                         self.state = AppState.LOGGEDOFF
                     else:
                         self.state = AppState.INVALIDNEWPASSWORD
@@ -267,7 +275,7 @@ class App:
                 if confirm_clicked:
                     self.state = AppState.LOGGEDOFF
 
-        elif (self.state >= AppState.LOGGEDON) and (self.state <= AppState.RECORDNOTFOUND):
+        elif (self.state >= AppState.LOGGEDON) and (self.state <= AppState.VIEWALLTITLES):
             self.draw_main_options_menu()
             if self.state == AppState.ADDRECORD:
                 # https://pyimgui.readthedocs.io/en/latest/reference/imgui.core.html#imgui.core.input_text_multiline
@@ -275,9 +283,9 @@ class App:
                 with imgui.begin("Enter note title and body:"):
                     with imgui.begin_child("Title input", 200, 50):
                         _, self.user_input = imgui.input_text(
-                        "",
-                        self.user_input,
-                        256,
+                            "",
+                            self.user_input,
+                            256,
                         )
 
                     _, self.user_input2 = imgui.input_text_multiline(
@@ -287,43 +295,125 @@ class App:
                     )
                     confirm_clicked = imgui.button("Confirm")
                     if confirm_clicked and len(self.user_input) and len(self.user_input2):
-                        # TODO remove these prints
-                        logger.debug(
-                            "User inputted the following note:"
-                            f"{self.user_input}\n"
-                            f"{self.user_input2}"
-                        )
-                        logger.debug(
-                                "Incrypted message:"
-                                f"{self.encoder.encode(self.user_input)}\n"
-                                f"{self.encoder.encode(self.user_input2)}"
-                            )
-                        # self.db.add_record(
-                        #     self.encoder.encode(self.user_input),
-                        #     self.encoder.encode(self.user_input2)
-                        # )
-                        self.user_input, self.user_input2 = "", ""
-                        self.state=AppState.LOGGEDON
+
+                        title = self.encoder.md5_sum(self.user_input)
+                        data = self.encoder.encode(self.user_input2)
+                        self.clear_inputs()
+
+                        record_exists = self.db.fetch_record(title)
+                        if record_exists:
+                            self.state = AppState.RECORDALREADYEXISTS
+                        else:
+                            self.db.add_record(title, data)
+                            self.state = AppState.LOGGEDON
+
             elif self.state == AppState.FINDRECORD:
-                # TODO open find record menu
                 # set app state to recordfound or recordnotfound
-                pass
-            elif self.state == AppState.RECORDFOUND:
-                pass
-            elif self.state == AppState.RECORDNOTFOUND:
-                pass
+                imgui.set_next_window_size(400, 100)
+                with imgui.begin("Enter note title to find:"):
+                    with imgui.begin_child("Title input", 200, 50):
+                        _, self.user_input = imgui.input_text(
+                            "",
+                            self.user_input,
+                            256,
+                        )
+                    confirm_clicked = imgui.button("Confirm")
+                    if confirm_clicked and len(self.user_input):
+                        result = self.db.fetch_record(self.encoder.md5_sum(self.user_input))
+                        if not result:
+                            self.clear_inputs()
+                            self.state = AppState.RECORDNOTFOUND
+                        else:
+                            self.user_input2 = self.encoder.decode(result)
+                            self.state = AppState.RECORDFOUND
+
+            elif self.state == AppState.DELETERECORD:
+                imgui.set_next_window_size(400, 100)
+                with imgui.begin("Enter note title to delete:"):
+                    with imgui.begin_child("Title input", 200, 50):
+                        _, self.user_input = imgui.input_text(
+                            "",
+                            self.user_input,
+                            256,
+                        )
+                    confirm_clicked = imgui.button("Confirm")
+                    if confirm_clicked and len(self.user_input):
+                        title = self.encoder.md5_sum(self.user_input)
+                        result = self.db.fetch_record(title)
+                        self.clear_inputs()
+                        if not result:
+                            self.state = AppState.RECORDNOTFOUND
+                        else:
+                            self.db.del_record(title)
+                            self.state = AppState.RECORDDELETED
+                
+        elif self.state == AppState.RECORDFOUND:
+            self.center_new_window()
+            with imgui.begin("Note found!"):
+                imgui.text(f"Found the following note for title {self.user_input}:\n\n")
+                imgui.text(self.user_input2)
+                confirm_copy = imgui.button("Copy to clipboard")
+                imgui.same_line()
+                confirm_clicked = imgui.button("Confirm")
+                if confirm_copy:
+                    imgui.set_clipboard_text(self.user_input2)
+                if confirm_clicked:
+                    self.clear_inputs()
+                    self.state = AppState.LOGGEDON
+
+        elif self.state == AppState.RECORDNOTFOUND:
+            self.draw_message_window(
+                header="Error!",
+                message="Note was not found!"
+            )
+        
+        elif self.state == AppState.RECORDALREADYEXISTS:
+            self.draw_message_window(
+                header="Error!",
+                message="Note with this title already exists!"
+            )
+        
+        elif self.state == AppState.RECORDDELETED:
+            self.draw_message_window(
+                header="Success!",
+                message="Note was deleted!"
+            )
             
 
     def draw_main_options_menu(self) -> None:
-        imgui.set_next_window_size(100, 80)
+        imgui.set_next_window_size(100, 100)
         imgui.set_next_window_position(0, 40)
         with imgui.begin("Options:"):
             add_btn = imgui.button("Add note")
             find_btn = imgui.button("Find note")
+            del_btn = imgui.button("Delete note")
             if add_btn:
                 self.state = AppState.ADDRECORD
             if find_btn:
                 self.state = AppState.FINDRECORD
+            if del_btn:
+                self.state = AppState.DELETERECORD
+
+    
+    def draw_message_window(
+        self,
+        header: str = "Success!",
+        message: str = "Something definetly happened..",
+        center: bool = True,
+    ) -> None:
+        if center:
+            self.center_new_window()
+        else:
+            width, height = WINDOW_SIZES(self.state)
+            imgui.set_next_window_size(width, height)
+        with imgui.begin(header):
+            imgui.text(message)
+            confirm_clicked = imgui.button("Confirm")
+            if confirm_clicked:
+                self.state = AppState.LOGGEDON
+
+    def clear_inputs(self) -> None:
+        self.user_input, self.user_input2 = "", ""
 
 
 def parse_args() -> argparse.Namespace:
